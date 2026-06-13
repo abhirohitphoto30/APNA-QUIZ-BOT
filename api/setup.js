@@ -1,22 +1,17 @@
 export default async function handler(req, res) {
     const tok = process.env.BOT_TOKEN;
-    if (!tok) {
-      return res.status(500).json({
-        error: '❌ BOT_TOKEN not set',
-        fix: 'Add BOT_TOKEN in Vercel Dashboard → Settings → Environment Variables',
-      });
-    }
+    if (!tok) return res.status(500).json({ error: 'BOT_TOKEN not set' });
 
     const host = req.headers['x-forwarded-host'] || req.headers.host;
-    const wh   = process.env.WEBHOOK_URL || `https://${host}/api/webhook`;
+    const wh   = process.env.WEBHOOK_URL || 'https://' + host + '/api/webhook';
 
     try {
-      const setRes  = await fetch(`https://api.telegram.org/bot${tok}/setWebhook`, {
+      const setRes  = await fetch('https://api.telegram.org/bot' + tok + '/setWebhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url: wh,
-          allowed_updates: ['message','callback_query','poll','poll_answer'],
+          allowed_updates: ['message', 'callback_query', 'poll', 'poll_answer'],
           drop_pending_updates: true,
         }),
       });
@@ -30,25 +25,25 @@ export default async function handler(req, res) {
         { command:'startquiz',  description:'Start a quiz by ID' },
         { command:'sendpoll',   description:'Send quiz as anonymous polls' },
         { command:'deletequiz', description:'Delete a quiz by ID' },
-        // Mid-quiz commands
-        { command:'fast',  description:'⚡ Add 10s to current quiz timer' },
-        { command:'slow',  description:'🐢 Subtract 10s from current quiz timer' },
-        { command:'pause', description:'⏸️ Pause the running quiz' },
-        { command:'end',   description:'🏁 End quiz and see final report' },
+        { command:'fast',       description:'Add 10s to current quiz timer' },
+        { command:'slow',       description:'Subtract 10s from current quiz timer' },
+        { command:'pause',      description:'Pause the running quiz' },
+        { command:'end',        description:'End quiz and see final report' },
+        { command:'next',       description:'(Group) Skip to next question — creator only' },
       ];
-      const cmdRes  = await fetch(`https://api.telegram.org/bot${tok}/setMyCommands`, {
+      const cmdRes  = await fetch('https://api.telegram.org/bot' + tok + '/setMyCommands', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ commands: cmds }),
       });
       const cmdData = await cmdRes.json();
 
-      const infoRes  = await fetch(`https://api.telegram.org/bot${tok}/getWebhookInfo`);
+      const infoRes  = await fetch('https://api.telegram.org/bot' + tok + '/getWebhookInfo');
       const infoData = await infoRes.json();
 
       res.status(200).json({
-        status: setData.ok ? '✅ Webhook registered successfully!' : '❌ Webhook registration failed',
-        webhook_url_used: wh,
+        status: setData.ok ? 'Webhook registered!' : 'Webhook failed',
+        webhook_url: wh,
         setWebhook: setData,
         setCommands: cmdData,
         webhookInfo: infoData,
