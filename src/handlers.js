@@ -9,7 +9,6 @@ import { InlineKeyboard } from 'grammy';
     180: '3m', 300: '5m',
   };
   const NM_OPTIONS = [0, 0.25, 0.33, 0.5, 1];
-  const TL_OPTIONS = [10, 20, 30, 40, 50, 60, 90, 120, 180, 300];
 
   function generateQuizId() {
     return 'QUIZ_' + nanoid(6).toUpperCase().replace(/[^A-Z0-9]/g, 'X');
@@ -46,16 +45,40 @@ import { InlineKeyboard } from 'grammy';
     return text.length <= max ? text : text.slice(0, max - 1) + '…';
   }
 
-  // Telegram limits: poll question ≤ 300 chars, each option ≤ 100 chars
   function safePollQuestion(text) { return truncate(text, 300); }
   function safePollOption(text)   { return truncate(text, 100); }
+
+  // ─────────────────────────────────────────────
+  // Build the "answered" version of a question message
+  // Shows each option with correct/wrong/selected markers
+  // ─────────────────────────────────────────────
+  function buildAnsweredMessage(q, selectedIdx, num, total, scoreStr) {
+    let text = `❓ *Q${num}/${total}*\n\n${q.question}\n\n`;
+
+    q.options.forEach((opt, i) => {
+      const isCorrect  = i === q.correctIndex;
+      const isSelected = i === selectedIdx;
+
+      if (isSelected && isCorrect) {
+        text += `✅ *${opt}* ← Your answer ✓\n`;
+      } else if (isSelected && !isCorrect) {
+        text += `❌ *${opt}* ← Your answer ✗\n`;
+      } else if (isCorrect) {
+        text += `☑️ *${opt}* ← Correct answer\n`;
+      } else {
+        text += `▫️ ${opt}\n`;
+      }
+    });
+
+    text += `\n${scoreStr}`;
+    return text;
+  }
 
   // ─────────────────────────────────────────────
   // /start
   // ─────────────────────────────────────────────
   export async function handleStart(ctx) {
     const name = ctx.from.first_name || 'there';
-    const redisOk = store.isRedisConfigured();
     await ctx.reply(
       `👋 *Hello, ${name}!*\n\nWelcome to *Apna Quiz Bot* 🎯\n\n` +
       `📝 /createquiz — create a new quiz\n` +
@@ -64,7 +87,7 @@ import { InlineKeyboard } from 'grammy';
       `▶️ /startquiz <ID> — start a quiz\n` +
       `📊 /sendpoll <ID> — send as anonymous polls\n` +
       `ℹ️ /help — detailed help\n\n` +
-      `${redisOk ? '✅ Persistent storage active.' : '⚠️ Storage: in-memory (set up Upstash Redis for persistence)'}`,
+      `${store.isRedisConfigured() ? '✅ Persistent storage active.' : '⚠️ Storage: in-memory (set up Upstash Redis for persistence)'}`,
       { parse_mode: 'Markdown' }
     );
   }
@@ -79,13 +102,8 @@ import { InlineKeyboard } from 'grammy';
       `• /createquiz — format guide\n` +
       `• Or just send a .txt file directly\n\n` +
       `*Play:*\n` +
-      `• In *private chat*: instant questions after each answer\n` +
-      `• In *groups*: timed poll → next Q after timer expires\n\n` +
-      `*Supported .txt formats:*\n` +
-      `Format 1 (with 😂 separator):\n` +
-      `\`\`\`\nQ1.Question text\n😂\nOption A ✅\nOption B\nEx: explanation\n\`\`\`\n\n` +
-      `Format 2 (Q.1) style):\n` +
-      `\`\`\`\nQ.1) Question?\nOption A\nOption B ✅\nEx: explanation\n\`\`\`\n\n` +
+      `• In *private chat*: tap an option → question updates to show correct/wrong → explanation → next question\n` +
+      `• In *groups*: timed poll → explanation after timer → next question\n\n` +
       `*Commands:*\n` +
       `/createquiz | /myquizzes | /startquiz <ID>\n` +
       `/sendpoll <ID> | /deletequiz <ID> | /stop\n\n` +
@@ -100,21 +118,13 @@ import { InlineKeyboard } from 'grammy';
   export async function handleCreateQuiz(ctx) {
     await ctx.reply(
       `📝 *Create a New Quiz*\n\n` +
-      `*How it works:*\n` +
-      `1️⃣ Prepare questions in a .txt file\n` +
-      `2️⃣ Send the file to this bot\n` +
-      `3️⃣ Give your quiz a name\n` +
-      `4️⃣ Play or share the Quiz ID!\n\n` +
+      `*How it works:*\n1️⃣ Prepare questions in a .txt file\n2️⃣ Send the file to this bot\n3️⃣ Give your quiz a name\n4️⃣ Play or share the Quiz ID!\n\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `📋 *Format 1 — Standard (Q.1) style)*\n` +
       `\`\`\`\nQ.1) Which planet is closest to the Sun?\nVenus\nMercury ✅\nMars\nEarth\nEx: Mercury is the closest planet.\n\`\`\`\n\n` +
       `📋 *Format 2 — With 😂 separator*\n` +
-      `\`\`\`\nQ1.Consider the following statements:\n1. Statement one\n2. Statement two\n😂\nOnly one ✅\nOnly two\nAll three\nNone\nEx: Explanation.\n\`\`\`\n\n` +
-      `━━━━━━━━━━━━━━━━━━━━\n` +
-      `📌 *Rules:*\n` +
-      `• Mark correct answer with ✅\n` +
-      `• Start explanation with \`Ex:\`\n` +
-      `• Max 4 options | Max 300 questions\n\n` +
+      `\`\`\`\nQ1.Consider the following statements:\n1. Statement one\n😂\nOnly one ✅\nOnly two\nAll three\nNone\nEx: Explanation.\n\`\`\`\n\n` +
+      `📌 *Rules:* Mark correct answer with ✅ | Start explanation with \`Ex:\` | Max 300 questions\n\n` +
       `👆 *Now send your .txt file!*`,
       { parse_mode: 'Markdown' }
     );
@@ -128,9 +138,7 @@ import { InlineKeyboard } from 'grammy';
     if (!doc.file_name?.toLowerCase().endsWith('.txt')) {
       return ctx.reply('❌ Please send a *.txt* file.', { parse_mode: 'Markdown' });
     }
-    if (doc.file_size > 5 * 1024 * 1024) {
-      return ctx.reply('❌ File too large (max 5 MB).');
-    }
+    if (doc.file_size > 5 * 1024 * 1024) return ctx.reply('❌ File too large (max 5 MB).');
 
     const msg = await ctx.reply('⏳ Parsing quiz file…');
     try {
@@ -155,8 +163,7 @@ import { InlineKeyboard } from 'grammy';
 
       await ctx.api.editMessageText(ctx.chat.id, msg.message_id,
         `✅ Found *${questions.length} question${questions.length > 1 ? 's' : ''}!*\n\n` +
-        `Preview — Q1: _${truncate(questions[0].question, 120)}_\n\n` +
-        `📝 *Send me a name for this quiz:*`,
+        `Preview — Q1: _${truncate(questions[0].question, 120)}_\n\n📝 *Send me a name for this quiz:*`,
         { parse_mode: 'Markdown' }
       );
     } catch (err) {
@@ -195,9 +202,7 @@ import { InlineKeyboard } from 'grammy';
         .text('📊 Send as Polls', `sendpoll:${quizId}:0`);
 
       await ctx.reply(
-        `🎉 *Quiz saved!*\n\n` +
-        `📚 *${name}*\n🆔 ID: \`${quizId}\`\n❓ Questions: *${pending.questions.length}*\n\n` +
-        `_Share this ID with others to let them play!_`,
+        `🎉 *Quiz saved!*\n\n📚 *${name}*\n🆔 ID: \`${quizId}\`\n❓ Questions: *${pending.questions.length}*\n\n_Share this ID with others to let them play!_`,
         { parse_mode: 'Markdown', reply_markup: kb }
       );
     }
@@ -208,9 +213,7 @@ import { InlineKeyboard } from 'grammy';
   // ─────────────────────────────────────────────
   export async function handleMyQuizzes(ctx) {
     const list = (await store.get(`quizzes:${ctx.from.id}`)) || [];
-    if (list.length === 0) {
-      return ctx.reply('📭 No quizzes yet.\n\nUse /createquiz to see the format, then send a .txt file!');
-    }
+    if (list.length === 0) return ctx.reply('📭 No quizzes yet.\n\nUse /createquiz to see the format!');
     let text = `📚 *Your Quizzes (${list.length})*\n\n`;
     const kb = new InlineKeyboard();
     for (const q of list.slice(0, 10)) {
@@ -222,19 +225,13 @@ import { InlineKeyboard } from 'grammy';
     await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: kb });
   }
 
-  // ─────────────────────────────────────────────
-  // /startquiz <ID>
-  // ─────────────────────────────────────────────
   export async function handleStartQuizCommand(ctx) {
     const parts = (ctx.message?.text || '').trim().split(/\s+/);
     const quizId = parts[1]?.toUpperCase();
-    if (!quizId) return ctx.reply('Usage: /startquiz QUIZ_XXXXXX\n\nUse /myquizzes to see your quizzes.');
+    if (!quizId) return ctx.reply('Usage: /startquiz QUIZ_XXXXXX');
     await showSettingsMenu(ctx, quizId);
   }
 
-  // ─────────────────────────────────────────────
-  // /sendpoll <ID>
-  // ─────────────────────────────────────────────
   export async function handleSendPollCommand(ctx) {
     const parts = (ctx.message?.text || '').trim().split(/\s+/);
     const quizId = parts[1]?.toUpperCase();
@@ -244,9 +241,6 @@ import { InlineKeyboard } from 'grammy';
     await startAnonymousPolls(ctx, quiz);
   }
 
-  // ─────────────────────────────────────────────
-  // /deletequiz <ID>
-  // ─────────────────────────────────────────────
   export async function handleDeleteQuiz(ctx) {
     const parts = (ctx.message?.text || '').trim().split(/\s+/);
     const quizId = parts[1]?.toUpperCase();
@@ -260,9 +254,6 @@ import { InlineKeyboard } from 'grammy';
     await ctx.reply(`🗑️ Quiz *${quiz.name}* (\`${quizId}\`) deleted.`, { parse_mode: 'Markdown' });
   }
 
-  // ─────────────────────────────────────────────
-  // /stop
-  // ─────────────────────────────────────────────
   export async function handleStop(ctx) {
     const sess = await getSession(ctx.chat.id);
     if (!sess) return ctx.reply('No active quiz in this chat.');
@@ -305,10 +296,8 @@ import { InlineKeyboard } from 'grammy';
     const nmText = settings.negativeMarking === 0 ? 'None' : `-${settings.negativeMarking}`;
     const text =
       `📚 *${quiz.name}*\n❓ ${quiz.questions.length} questions\n\n` +
-      `⚙️ *Settings*\n` +
-      `➖ Negative Marking: *${nmText}* per wrong\n` +
-      `⏱️ Time Limit: *${TL_LABELS[settings.timeLimit]}* per question\n\n` +
-      `_Choose mode below:_`;
+      `⚙️ *Settings*\n➖ Negative Marking: *${nmText}* per wrong\n` +
+      `⏱️ Time Limit: *${TL_LABELS[settings.timeLimit]}* per question\n\n_Choose mode below:_`;
 
     const opts = { parse_mode: 'Markdown', reply_markup: kb };
     if (editMsgId) {
@@ -354,11 +343,12 @@ import { InlineKeyboard } from 'grammy';
       return startAnonymousPolls(ctx, quiz);
     }
     if (data.startsWith('ans:')) {
-      const [, sessionId, optIdxStr] = data.split(':');
-      return handleInlineAnswer(ctx, sessionId, parseInt(optIdxStr, 10));
-    }
-    if (data.startsWith('nextq:')) {
-      return handleNextQuestion(ctx, data.split(':')[1]);
+      // ans:sessionId:optionIdx:msgId
+      const parts = data.split(':');
+      const sessionId = parts[1];
+      const optIdx    = parseInt(parts[2], 10);
+      const msgId     = parseInt(parts[3], 10);
+      return handleInlineAnswer(ctx, sessionId, optIdx, msgId);
     }
     if (data.startsWith('endquiz:')) {
       const sessionId = data.split(':')[1];
@@ -395,14 +385,16 @@ import { InlineKeyboard } from 'grammy';
     await ctx.reply(
       `🚀 *${quiz.name}* started!\n` +
       `❓ ${quiz.questions.length} questions | ⏱️ ${TL_LABELS[settings.timeLimit]} each | ➖ ${nmText}\n\n` +
-      `_${isGroup ? 'Everyone can participate! Leaderboard at the end.' : 'Answer each question to proceed.'}_`,
+      `_${isGroup ? 'Everyone can participate! Leaderboard at the end.' : 'Tap an option to answer. Result shown instantly!'}_`,
       { parse_mode: 'Markdown' }
     );
     await sendQuestion(ctx, session, quiz);
   }
 
   // ─────────────────────────────────────────────
-  // SEND QUESTION — handles long questions for group polls
+  // SEND QUESTION
+  // Private: inline keyboard with message_id encoded in callback
+  // Group: Telegram quiz poll (truncated to limits)
   // ─────────────────────────────────────────────
   async function sendQuestion(ctx, session, quiz) {
     const q = quiz.questions[session.currentIndex];
@@ -411,60 +403,74 @@ import { InlineKeyboard } from 'grammy';
     const { settings, isGroup } = session;
 
     if (isGroup) {
-      // Telegram poll limits: question ≤ 300 chars, each option ≤ 100 chars
       const pollQuestion = safePollQuestion(`Q${num}/${total}: ${q.question}`);
-      const pollOptions = q.options.map(o => safePollOption(o));
+      const pollOptions  = q.options.map(o => safePollOption(o));
 
-      let pollMsg = null;
       try {
-        pollMsg = await ctx.api.sendPoll(session.chatId, pollQuestion, pollOptions, {
+        const pollMsg = await ctx.api.sendPoll(session.chatId, pollQuestion, pollOptions, {
           type: 'quiz',
           correct_option_id: q.correctIndex,
           is_anonymous: false,
           open_period: settings.timeLimit,
           explanation: q.explanation ? truncate(q.explanation, 200) : undefined,
         });
-      } catch (pollErr) {
-        console.error('Poll send failed, falling back to text question:', pollErr.message);
-        // Fallback: send question as text with inline keyboard (like private mode)
-        return sendQuestionAsText(ctx, session, quiz, q, num, total);
+
+        await store.set(`poll:${pollMsg.poll.id}`, {
+          chatId: session.chatId, questionIndex: session.currentIndex,
+        }, settings.timeLimit + 60);
+
+        session.currentPollId = pollMsg.poll.id;
+        session.currentIndex++;
+        await saveSession(session.chatId, session);
+      } catch (err) {
+        console.error('Poll failed, using text fallback:', err.message);
+        await sendPrivateStyleQuestion(ctx, session, quiz, q, num, total);
       }
-
-      await store.set(`poll:${pollMsg.poll.id}`, {
-        chatId: session.chatId,
-        questionIndex: session.currentIndex,
-      }, settings.timeLimit + 60);
-
-      session.currentPollId = pollMsg.poll.id;
-      session.currentIndex++;
-      await saveSession(session.chatId, session);
-
     } else {
-      await sendQuestionAsText(ctx, session, quiz, q, num, total);
+      await sendPrivateStyleQuestion(ctx, session, quiz, q, num, total);
     }
   }
 
-  async function sendQuestionAsText(ctx, session, quiz, q, num, total) {
+  // Private-style question: inline buttons, message_id in callback data for editing
+  async function sendPrivateStyleQuestion(ctx, session, quiz, q, num, total) {
     const kb = new InlineKeyboard();
-    q.options.forEach((opt, i) => kb.text(opt.slice(0, 64), `ans:${session.sessionId}:${i}`).row());
+    // Placeholder message_id = 0; will be replaced after send
+    q.options.forEach((opt, i) => {
+      kb.text(opt.slice(0, 64), `ans:${session.sessionId}:${i}:0`).row();
+    });
     kb.text('🛑 End Quiz', `endquiz:${session.sessionId}`);
 
-    await ctx.api.sendMessage(session.chatId,
+    const sentMsg = await ctx.api.sendMessage(session.chatId,
       `❓ *Q${num}/${total}*  ⏱️ ${TL_LABELS[session.settings.timeLimit]}\n\n${q.question}`,
       { parse_mode: 'Markdown', reply_markup: kb }
     );
 
+    // Re-edit with real message_id in callback data so we can edit it after answer
+    const realKb = new InlineKeyboard();
+    q.options.forEach((opt, i) => {
+      realKb.text(opt.slice(0, 64), `ans:${session.sessionId}:${i}:${sentMsg.message_id}`).row();
+    });
+    realKb.text('🛑 End Quiz', `endquiz:${session.sessionId}`);
+
+    await ctx.api.editMessageReplyMarkup(session.chatId, sentMsg.message_id, {
+      reply_markup: realKb
+    }).catch(() => {});
+
     if (!session.isGroup) {
-      // Private: save session (currentIndex will advance after answer)
+      // Save current question msg id for editing after answer
+      session.currentMsgId = sentMsg.message_id;
       await saveSession(session.chatId, session);
     } else {
-      // Group fallback: advance index and save
       session.currentIndex++;
+      session.currentMsgId = sentMsg.message_id;
       await saveSession(session.chatId, session);
     }
   }
 
-  async function handleInlineAnswer(ctx, sessionId, optionIdx) {
+  // ─────────────────────────────────────────────
+  // HANDLE INLINE ANSWER — edit the question msg to show result
+  // ─────────────────────────────────────────────
+  async function handleInlineAnswer(ctx, sessionId, optionIdx, msgId) {
     const sess = await getSession(ctx.chat.id);
     if (!sess || sess.sessionId !== sessionId) return;
 
@@ -479,6 +485,7 @@ import { InlineKeyboard } from 'grammy';
     const userName = ctx.from.first_name || 'Player';
     const isCorrect = optionIdx === q.correctIndex;
 
+    // Prevent double-answer in group
     if (sess.isGroup) {
       if (!sess.participants[userId]) sess.participants[userId] = { score: 0, correct: 0, wrong: 0, name: userName };
       if (sess.participants[userId][`q${questionIndex}`] !== undefined) {
@@ -497,50 +504,63 @@ import { InlineKeyboard } from 'grammy';
       else sess.wrong = (sess.wrong || 0) + 1;
     }
 
+    // Show popup
     await ctx.answerCallbackQuery({
-      text: isCorrect ? '✅ Correct!' : '❌ Wrong answer', show_alert: true,
+      text: isCorrect ? '✅ Correct!' : '❌ Wrong answer', show_alert: false,
     }).catch(() => {});
 
-    let expMsg = isCorrect ? '✅ *Correct!*' : `❌ *Wrong!* Correct: *${q.options[q.correctIndex]}*`;
-    if (q.explanation) expMsg += `\n\n📖 *Explanation:*\n${q.explanation}`;
-    await ctx.api.sendMessage(sess.chatId, expMsg, { parse_mode: 'Markdown' }).catch(() => {});
+    // ── EDIT the question message to show result ──────────────────────────
+    const currentScore = sess.isGroup
+      ? (sess.participants[userId]?.score || 0)
+      : Math.max(0, sess.score || 0);
+    const total = quiz.questions.length;
+    const num = questionIndex + 1;
+    const scoreDisplay = sess.isGroup ? '' : `\n🎯 Running score: *${Math.max(0, currentScore)}*`;
 
+    const resultText = buildAnsweredMessage(q, optionIdx, num, total, scoreDisplay);
+
+    // Edit question message to show answered state (no keyboard)
+    if (msgId && msgId > 0) {
+      await ctx.api.editMessageText(sess.chatId, msgId, resultText, {
+        parse_mode: 'Markdown',
+      }).catch(() => {});
+    }
+
+    // ── Send explanation as separate message ──────────────────────────────
+    if (q.explanation) {
+      await ctx.api.sendMessage(sess.chatId,
+        `📖 *Explanation:*\n${q.explanation}`,
+        { parse_mode: 'Markdown' }
+      ).catch(() => {});
+    }
+
+    // ── Advance to next question ──────────────────────────────────────────
     if (!sess.isGroup) {
       sess.currentIndex++;
       await saveSession(ctx.chat.id, sess);
+
       if (sess.currentIndex >= quiz.questions.length) {
         await finalizeQuiz(ctx, sess);
         await deleteSession(ctx.chat.id);
       } else {
+        // Small delay so user sees result before next question
+        await new Promise(r => setTimeout(r, 800));
         await sendQuestion(ctx, sess, quiz);
       }
     } else {
       await saveSession(ctx.chat.id, sess);
-      // In group text-fallback mode, show next question after answer
       if (sess.currentIndex >= quiz.questions.length) {
         await finalizeGroupQuiz(ctx, sess, quiz, sess.chatId);
         await store.del(`session:${sess.chatId}`);
       } else {
+        await new Promise(r => setTimeout(r, 800));
         await sendQuestion(ctx, sess, quiz);
       }
     }
   }
 
-  async function handleNextQuestion(ctx, sessionId) {
-    const sess = await getSession(ctx.chat.id);
-    if (!sess || sess.sessionId !== sessionId) return;
-    const quiz = await store.get(`quiz:${sess.quizId}`);
-    if (!quiz) return;
-    if (sess.currentIndex >= quiz.questions.length) {
-      await finalizeQuiz(ctx, sess);
-      await deleteSession(ctx.chat.id);
-    } else {
-      await sendQuestion(ctx, sess, quiz);
-    }
-  }
-
   // ─────────────────────────────────────────────
-  // POLL ANSWER (group polls)
+  // POLL ANSWER (group native polls)
   // ─────────────────────────────────────────────
   export async function handlePollAnswer(ctx) {
     const pa = ctx.pollAnswer;
@@ -555,8 +575,7 @@ import { InlineKeyboard } from 'grammy';
     const quiz = await store.get(`quiz:${sess.quizId}`);
     if (!quiz) return;
 
-    const qIdx = pollMeta.questionIndex;
-    const q = quiz.questions[qIdx];
+    const q = quiz.questions[pollMeta.questionIndex];
     if (!q) return;
 
     const userId = pa.user.id;
@@ -567,8 +586,8 @@ import { InlineKeyboard } from 'grammy';
     if (!sess.participants[userId]) {
       sess.participants[userId] = { score: 0, correct: 0, wrong: 0, name: pa.user.first_name || `User${userId}` };
     }
-    if (sess.participants[userId][`q${qIdx}`] !== undefined) return;
-    sess.participants[userId][`q${qIdx}`] = isCorrect;
+    if (sess.participants[userId][`q${pollMeta.questionIndex}`] !== undefined) return;
+    sess.participants[userId][`q${pollMeta.questionIndex}`] = isCorrect;
 
     const sc = isCorrect ? 1 : -sess.settings.negativeMarking;
     sess.participants[userId].score = (sess.participants[userId].score || 0) + sc;
@@ -579,7 +598,7 @@ import { InlineKeyboard } from 'grammy';
   }
 
   // ─────────────────────────────────────────────
-  // POLL CLOSED — send explanation + next question
+  // POLL CLOSED — explanation + next question
   // ─────────────────────────────────────────────
   export async function handlePollClosed(ctx) {
     const poll = ctx.poll;
@@ -613,7 +632,7 @@ import { InlineKeyboard } from 'grammy';
   }
 
   // ─────────────────────────────────────────────
-  // FINALIZE — Private chat
+  // FINALIZE — Private
   // ─────────────────────────────────────────────
   async function finalizeQuiz(ctx, sess) {
     const quiz = await store.get(`quiz:${sess.quizId}`);
@@ -635,27 +654,25 @@ import { InlineKeyboard } from 'grammy';
   }
 
   // ─────────────────────────────────────────────
-  // FINALIZE — Group (Leaderboard)
+  // FINALIZE — Group Leaderboard
   // ─────────────────────────────────────────────
   async function finalizeGroupQuiz(ctx, sess, quiz, chatId) {
     const total = quiz.questions.length;
-    const participants = sess.participants || {};
-    const entries = Object.entries(participants)
+    const entries = Object.entries(sess.participants || {})
       .sort(([, a], [, b]) => (b.score || 0) - (a.score || 0));
 
     const MEDALS = ['🥇', '🥈', '🥉'];
-    let lb = `🏆 *${quiz.name} — Final Leaderboard*\n❓ ${total} Questions\n`;
-    lb += `━━━━━━━━━━━━━━━━━━━━\n`;
+    let lb = `🏆 *${quiz.name} — Final Leaderboard*\n❓ ${total} Questions\n━━━━━━━━━━━━━━━━━━━━\n`;
 
     if (entries.length === 0) {
       lb += '\n_No one attempted the quiz._';
     } else {
       entries.slice(0, 10).forEach(([uid, p], i) => {
         const medal = MEDALS[i] || `${i + 1}.`;
-        const name = (p.name || `User ${uid}`).slice(0, 20);
+        const name  = (p.name || `User ${uid}`).slice(0, 20);
         const score = Math.max(0, p.score || 0);
         const scoreStr = Number.isInteger(score) ? `${score}` : score.toFixed(2);
-        const pct = total > 0 ? Math.round((score / total) * 100) : 0;
+        const pct   = total > 0 ? Math.round((score / total) * 100) : 0;
         lb += `${medal} *${name}*: ${scoreStr}/${total} (${pct}%) ✅${p.correct || 0} ❌${p.wrong || 0}\n`;
       });
       lb += `━━━━━━━━━━━━━━━━━━━━\n👥 ${entries.length} participant${entries.length > 1 ? 's' : ''}`;
@@ -671,10 +688,7 @@ import { InlineKeyboard } from 'grammy';
     const settings = await getUserSettings(ctx.from.id);
     const total = quiz.questions.length;
 
-    await ctx.reply(
-      `📊 Sending *${total}* anonymous quiz polls from *${quiz.name}*…`,
-      { parse_mode: 'Markdown' }
-    );
+    await ctx.reply(`📊 Sending *${total}* anonymous polls from *${quiz.name}*…`, { parse_mode: 'Markdown' });
 
     let sent = 0;
     for (let i = 0; i < total; i++) {
@@ -684,19 +698,17 @@ import { InlineKeyboard } from 'grammy';
           safePollQuestion(`Q${i + 1}/${total}: ${q.question}`),
           q.options.map(o => safePollOption(o)),
           {
-            type: 'quiz',
-            correct_option_id: q.correctIndex,
-            is_anonymous: true,
-            open_period: settings.timeLimit,
+            type: 'quiz', correct_option_id: q.correctIndex,
+            is_anonymous: true, open_period: settings.timeLimit,
             explanation: q.explanation ? truncate(q.explanation, 200) : undefined,
           }
         );
         sent++;
         if (i < total - 1) await new Promise(r => setTimeout(r, 500));
       } catch (err) {
-        console.error(`Poll send error Q${i + 1}:`, err.message);
+        console.error(`Poll Q${i + 1} error:`, err.message);
       }
     }
-    await ctx.reply(`✅ Sent ${sent}/${total} polls! Correct answers shown after each timer.`);
+    await ctx.reply(`✅ Sent ${sent}/${total} polls!`);
   }
   
