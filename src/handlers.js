@@ -35,15 +35,20 @@ import { InlineKeyboard } from 'grammy';
   }
 
   function scoreText(score, total) {
-    const pct = Math.round((score / total) * 100);
+    const safe = Math.max(0, score);
+    const pct = total > 0 ? Math.round((safe / total) * 100) : 0;
     const grade = pct >= 90 ? '🏆 Excellent!' : pct >= 70 ? '🥇 Good!' : pct >= 50 ? '✅ Pass' : '❌ Needs work';
-    return `*Score: ${score}/${total}* (${pct}%) ${grade}`;
+    return `*Score: ${safe}/${total}* (${pct}%) ${grade}`;
   }
 
-  function truncate(text, max = 100) {
+  function truncate(text, max) {
     if (!text) return '';
     return text.length <= max ? text : text.slice(0, max - 1) + '…';
   }
+
+  // Telegram limits: poll question ≤ 300 chars, each option ≤ 100 chars
+  function safePollQuestion(text) { return truncate(text, 300); }
+  function safePollOption(text)   { return truncate(text, 100); }
 
   // ─────────────────────────────────────────────
   // /start
@@ -71,7 +76,7 @@ import { InlineKeyboard } from 'grammy';
     await ctx.reply(
       `📖 *How to use Apna Quiz Bot*\n\n` +
       `*Create a Quiz:*\n` +
-      `• /createquiz — guided creation with format examples\n` +
+      `• /createquiz — format guide\n` +
       `• Or just send a .txt file directly\n\n` +
       `*Play:*\n` +
       `• In *private chat*: instant questions after each answer\n` +
@@ -80,59 +85,37 @@ import { InlineKeyboard } from 'grammy';
       `Format 1 (with 😂 separator):\n` +
       `\`\`\`\nQ1.Question text\n😂\nOption A ✅\nOption B\nEx: explanation\n\`\`\`\n\n` +
       `Format 2 (Q.1) style):\n` +
-      `\`\`\`\nQ.1) Question?\nOption A\nOption B ✅\nOption C\nEx: explanation\n\`\`\`\n\n` +
+      `\`\`\`\nQ.1) Question?\nOption A\nOption B ✅\nEx: explanation\n\`\`\`\n\n` +
       `*Commands:*\n` +
-      `/createquiz — create quiz (guided)\n` +
-      `/myquizzes — list all quizzes\n` +
-      `/startquiz <ID> — start interactive quiz\n` +
-      `/sendpoll <ID> — broadcast as anon polls\n` +
-      `/deletequiz <ID> — delete a quiz\n` +
-      `/stop — stop current quiz\n` +
-      `\n*Features:*\n` +
-      `✅ Negative marking\n⏱️ 10s–5min time limits\n📊 Leaderboard in groups\n🔢 Up to 300 questions`,
+      `/createquiz | /myquizzes | /startquiz <ID>\n` +
+      `/sendpoll <ID> | /deletequiz <ID> | /stop\n\n` +
+      `*Features:* ✅ Negative marking | ⏱️ 10s–5min | 📊 Leaderboard | 🔢 Up to 300 questions`,
       { parse_mode: 'Markdown' }
     );
   }
 
   // ─────────────────────────────────────────────
-  // /createquiz — guided creation
+  // /createquiz
   // ─────────────────────────────────────────────
   export async function handleCreateQuiz(ctx) {
     await ctx.reply(
       `📝 *Create a New Quiz*\n\n` +
-      `*Step 1:* Prepare your questions in a .txt file\n` +
-      `*Step 2:* Send the file to this bot\n` +
-      `*Step 3:* Give your quiz a name\n` +
-      `*Step 4:* Play or share the Quiz ID!\n\n` +
+      `*How it works:*\n` +
+      `1️⃣ Prepare questions in a .txt file\n` +
+      `2️⃣ Send the file to this bot\n` +
+      `3️⃣ Give your quiz a name\n` +
+      `4️⃣ Play or share the Quiz ID!\n\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `📋 *Format 1 — Standard (Q.1) style)*\n` +
-      `\`\`\`\n` +
-      `Q.1) Which planet is closest to the Sun?\n` +
-      `Venus\n` +
-      `Mercury ✅\n` +
-      `Mars\n` +
-      `Earth\n` +
-      `Ex: Mercury is the closest planet to the Sun.\n` +
-      `\`\`\`\n\n` +
-      `📋 *Format 2 — Multi-statement (😂 separator)*\n` +
-      `\`\`\`\n` +
-      `Q1.Consider the following statements:\n` +
-      `1. Statement one\n` +
-      `2. Statement two\n` +
-      `😂\n` +
-      `Only one ✅\n` +
-      `Only two\n` +
-      `All three\n` +
-      `None\n` +
-      `Ex: Explanation goes here.\n` +
-      `\`\`\`\n\n` +
+      `\`\`\`\nQ.1) Which planet is closest to the Sun?\nVenus\nMercury ✅\nMars\nEarth\nEx: Mercury is the closest planet.\n\`\`\`\n\n` +
+      `📋 *Format 2 — With 😂 separator*\n` +
+      `\`\`\`\nQ1.Consider the following statements:\n1. Statement one\n2. Statement two\n😂\nOnly one ✅\nOnly two\nAll three\nNone\nEx: Explanation.\n\`\`\`\n\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
       `📌 *Rules:*\n` +
       `• Mark correct answer with ✅\n` +
       `• Start explanation with \`Ex:\`\n` +
-      `• Max 4 options per question\n` +
-      `• Max 300 questions per quiz\n\n` +
-      `👆 *Now send your .txt file to create your quiz!*`,
+      `• Max 4 options | Max 300 questions\n\n` +
+      `👆 *Now send your .txt file!*`,
       { parse_mode: 'Markdown' }
     );
   }
@@ -160,7 +143,7 @@ import { InlineKeyboard } from 'grammy';
 
       if (questions.length === 0) {
         return ctx.api.editMessageText(ctx.chat.id, msg.message_id,
-          '❌ No valid questions found. Check your file format.\n\nUse /createquiz to see the correct format.');
+          '❌ No valid questions found. Check your file format.\n\nUse /createquiz to see supported formats.');
       }
       if (questions.length > 300) {
         return ctx.api.editMessageText(ctx.chat.id, msg.message_id,
@@ -213,9 +196,7 @@ import { InlineKeyboard } from 'grammy';
 
       await ctx.reply(
         `🎉 *Quiz saved!*\n\n` +
-        `📚 *${name}*\n` +
-        `🆔 ID: \`${quizId}\`\n` +
-        `❓ Questions: *${pending.questions.length}*\n\n` +
+        `📚 *${name}*\n🆔 ID: \`${quizId}\`\n❓ Questions: *${pending.questions.length}*\n\n` +
         `_Share this ID with others to let them play!_`,
         { parse_mode: 'Markdown', reply_markup: kb }
       );
@@ -309,7 +290,6 @@ import { InlineKeyboard } from 'grammy';
       kb.text(settings.negativeMarking === nm ? `✅ ${label}` : label, `setnm:${quizId}:${nm}`);
     }
     kb.row();
-
     kb.text('— Time Limit —', 'noop').row();
     for (const tl of [10, 20, 30, 40, 50, 60]) {
       kb.text(settings.timeLimit === tl ? `✅ ${TL_LABELS[tl]}` : TL_LABELS[tl], `settl:${quizId}:${tl}`);
@@ -324,10 +304,9 @@ import { InlineKeyboard } from 'grammy';
 
     const nmText = settings.negativeMarking === 0 ? 'None' : `-${settings.negativeMarking}`;
     const text =
-      `📚 *${quiz.name}*\n` +
-      `❓ ${quiz.questions.length} questions\n\n` +
+      `📚 *${quiz.name}*\n❓ ${quiz.questions.length} questions\n\n` +
       `⚙️ *Settings*\n` +
-      `➖ Negative Marking: *${nmText}* per wrong answer\n` +
+      `➖ Negative Marking: *${nmText}* per wrong\n` +
       `⏱️ Time Limit: *${TL_LABELS[settings.timeLimit]}* per question\n\n` +
       `_Choose mode below:_`;
 
@@ -349,16 +328,16 @@ import { InlineKeyboard } from 'grammy';
 
     if (data.startsWith('setnm:')) {
       const [, quizId, nmStr] = data.split(':');
-      const settings = await getUserSettings(ctx.from.id);
-      settings.negativeMarking = parseFloat(nmStr);
-      await store.set(`settings:${ctx.from.id}`, settings);
+      const s = await getUserSettings(ctx.from.id);
+      s.negativeMarking = parseFloat(nmStr);
+      await store.set(`settings:${ctx.from.id}`, s);
       return showSettingsMenu(ctx, quizId, ctx.callbackQuery.message.message_id);
     }
     if (data.startsWith('settl:')) {
       const [, quizId, tlStr] = data.split(':');
-      const settings = await getUserSettings(ctx.from.id);
-      settings.timeLimit = parseInt(tlStr, 10);
-      await store.set(`settings:${ctx.from.id}`, settings);
+      const s = await getUserSettings(ctx.from.id);
+      s.timeLimit = parseInt(tlStr, 10);
+      await store.set(`settings:${ctx.from.id}`, s);
       return showSettingsMenu(ctx, quizId, ctx.callbackQuery.message.message_id);
     }
     if (data.startsWith('showsettings:')) {
@@ -410,19 +389,21 @@ import { InlineKeyboard } from 'grammy';
       score: 0, attempted: 0, correct: 0, wrong: 0,
       settings, isGroup, participants: {}, startedAt: Date.now(),
     };
-
     await saveSession(ctx.chat.id, session);
 
     const nmText = settings.negativeMarking === 0 ? 'none' : `-${settings.negativeMarking}`;
     await ctx.reply(
       `🚀 *${quiz.name}* started!\n` +
-      `❓ ${quiz.questions.length} questions | ⏱️ ${TL_LABELS[settings.timeLimit]} each | ➖ Negative: ${nmText}\n\n` +
+      `❓ ${quiz.questions.length} questions | ⏱️ ${TL_LABELS[settings.timeLimit]} each | ➖ ${nmText}\n\n` +
       `_${isGroup ? 'Everyone can participate! Leaderboard at the end.' : 'Answer each question to proceed.'}_`,
       { parse_mode: 'Markdown' }
     );
     await sendQuestion(ctx, session, quiz);
   }
 
+  // ─────────────────────────────────────────────
+  // SEND QUESTION — handles long questions for group polls
+  // ─────────────────────────────────────────────
   async function sendQuestion(ctx, session, quiz) {
     const q = quiz.questions[session.currentIndex];
     const total = quiz.questions.length;
@@ -430,13 +411,24 @@ import { InlineKeyboard } from 'grammy';
     const { settings, isGroup } = session;
 
     if (isGroup) {
-      const pollMsg = await ctx.api.sendPoll(session.chatId, q.question, q.options, {
-        type: 'quiz',
-        correct_option_id: q.correctIndex,
-        is_anonymous: false,
-        open_period: settings.timeLimit,
-        explanation: q.explanation ? truncate(q.explanation, 200) : undefined,
-      });
+      // Telegram poll limits: question ≤ 300 chars, each option ≤ 100 chars
+      const pollQuestion = safePollQuestion(`Q${num}/${total}: ${q.question}`);
+      const pollOptions = q.options.map(o => safePollOption(o));
+
+      let pollMsg = null;
+      try {
+        pollMsg = await ctx.api.sendPoll(session.chatId, pollQuestion, pollOptions, {
+          type: 'quiz',
+          correct_option_id: q.correctIndex,
+          is_anonymous: false,
+          open_period: settings.timeLimit,
+          explanation: q.explanation ? truncate(q.explanation, 200) : undefined,
+        });
+      } catch (pollErr) {
+        console.error('Poll send failed, falling back to text question:', pollErr.message);
+        // Fallback: send question as text with inline keyboard (like private mode)
+        return sendQuestionAsText(ctx, session, quiz, q, num, total);
+      }
 
       await store.set(`poll:${pollMsg.poll.id}`, {
         chatId: session.chatId,
@@ -445,21 +437,30 @@ import { InlineKeyboard } from 'grammy';
 
       session.currentPollId = pollMsg.poll.id;
       session.currentIndex++;
+      await saveSession(session.chatId, session);
 
-      await ctx.api.sendMessage(session.chatId,
-        `❓ *Q${num}/${total}* ⏱️ ${TL_LABELS[settings.timeLimit]}`,
-        { parse_mode: 'Markdown' }
-      );
+    } else {
+      await sendQuestionAsText(ctx, session, quiz, q, num, total);
+    }
+  }
+
+  async function sendQuestionAsText(ctx, session, quiz, q, num, total) {
+    const kb = new InlineKeyboard();
+    q.options.forEach((opt, i) => kb.text(opt.slice(0, 64), `ans:${session.sessionId}:${i}`).row());
+    kb.text('🛑 End Quiz', `endquiz:${session.sessionId}`);
+
+    await ctx.api.sendMessage(session.chatId,
+      `❓ *Q${num}/${total}*  ⏱️ ${TL_LABELS[session.settings.timeLimit]}\n\n${q.question}`,
+      { parse_mode: 'Markdown', reply_markup: kb }
+    );
+
+    if (!session.isGroup) {
+      // Private: save session (currentIndex will advance after answer)
       await saveSession(session.chatId, session);
     } else {
-      const kb = new InlineKeyboard();
-      q.options.forEach((opt, i) => kb.text(opt, `ans:${session.sessionId}:${i}`).row());
-      kb.text('🛑 End Quiz', `endquiz:${session.sessionId}`);
-
-      await ctx.api.sendMessage(session.chatId,
-        `❓ *Q${num}/${total}*  ⏱️ ${TL_LABELS[settings.timeLimit]}\n\n${q.question}`,
-        { parse_mode: 'Markdown', reply_markup: kb }
-      );
+      // Group fallback: advance index and save
+      session.currentIndex++;
+      await saveSession(session.chatId, session);
     }
   }
 
@@ -497,8 +498,7 @@ import { InlineKeyboard } from 'grammy';
     }
 
     await ctx.answerCallbackQuery({
-      text: isCorrect ? '✅ Correct!' : '❌ Wrong answer',
-      show_alert: true,
+      text: isCorrect ? '✅ Correct!' : '❌ Wrong answer', show_alert: true,
     }).catch(() => {});
 
     let expMsg = isCorrect ? '✅ *Correct!*' : `❌ *Wrong!* Correct: *${q.options[q.correctIndex]}*`;
@@ -516,6 +516,13 @@ import { InlineKeyboard } from 'grammy';
       }
     } else {
       await saveSession(ctx.chat.id, sess);
+      // In group text-fallback mode, show next question after answer
+      if (sess.currentIndex >= quiz.questions.length) {
+        await finalizeGroupQuiz(ctx, sess, quiz, sess.chatId);
+        await store.del(`session:${sess.chatId}`);
+      } else {
+        await sendQuestion(ctx, sess, quiz);
+      }
     }
   }
 
@@ -572,7 +579,7 @@ import { InlineKeyboard } from 'grammy';
   }
 
   // ─────────────────────────────────────────────
-  // POLL CLOSED (group polls — explanation + next Q)
+  // POLL CLOSED — send explanation + next question
   // ─────────────────────────────────────────────
   export async function handlePollClosed(ctx) {
     const poll = ctx.poll;
@@ -606,7 +613,7 @@ import { InlineKeyboard } from 'grammy';
   }
 
   // ─────────────────────────────────────────────
-  // FINALIZE — Private
+  // FINALIZE — Private chat
   // ─────────────────────────────────────────────
   async function finalizeQuiz(ctx, sess) {
     const quiz = await store.get(`quiz:${sess.quizId}`);
@@ -617,13 +624,12 @@ import { InlineKeyboard } from 'grammy';
     const secs = timeTaken % 60;
 
     await ctx.api.sendMessage(sess.chatId,
-      `🏁 *Quiz Complete!*\n` +
-      `📚 ${quiz?.name || 'Quiz'}\n\n` +
+      `🏁 *Quiz Complete!*\n📚 ${quiz?.name || 'Quiz'}\n\n` +
       `${scoreText(score, total)}\n\n` +
       `✅ Correct: *${sess.correct || 0}*\n` +
       `❌ Wrong: *${sess.wrong || 0}*\n` +
       `⏭️ Skipped: *${total - (sess.attempted || 0)}*\n` +
-      `⏱️ Time taken: *${mins > 0 ? `${mins}m ` : ''}${secs}s*`,
+      `⏱️ Time: *${mins > 0 ? `${mins}m ` : ''}${secs}s*`,
       { parse_mode: 'Markdown' }
     ).catch(() => {});
   }
@@ -638,8 +644,7 @@ import { InlineKeyboard } from 'grammy';
       .sort(([, a], [, b]) => (b.score || 0) - (a.score || 0));
 
     const MEDALS = ['🥇', '🥈', '🥉'];
-    let lb = `🏆 *${quiz.name} — Final Leaderboard*\n`;
-    lb += `❓ ${total} Questions\n`;
+    let lb = `🏆 *${quiz.name} — Final Leaderboard*\n❓ ${total} Questions\n`;
     lb += `━━━━━━━━━━━━━━━━━━━━\n`;
 
     if (entries.length === 0) {
@@ -649,13 +654,11 @@ import { InlineKeyboard } from 'grammy';
         const medal = MEDALS[i] || `${i + 1}.`;
         const name = (p.name || `User ${uid}`).slice(0, 20);
         const score = Math.max(0, p.score || 0);
-        const scoreStr = Number.isInteger(score) ? score.toString() : score.toFixed(2);
-        const pct = Math.round((score / total) * 100);
-        lb += `${medal} *${name}*\n`;
-        lb += `   ${scoreStr}/${total} (${pct}%) • ✅${p.correct || 0} ❌${p.wrong || 0}\n`;
+        const scoreStr = Number.isInteger(score) ? `${score}` : score.toFixed(2);
+        const pct = total > 0 ? Math.round((score / total) * 100) : 0;
+        lb += `${medal} *${name}*: ${scoreStr}/${total} (${pct}%) ✅${p.correct || 0} ❌${p.wrong || 0}\n`;
       });
-      lb += `━━━━━━━━━━━━━━━━━━━━\n`;
-      lb += `👥 Total participants: ${entries.length}`;
+      lb += `━━━━━━━━━━━━━━━━━━━━\n👥 ${entries.length} participant${entries.length > 1 ? 's' : ''}`;
     }
 
     await ctx.api.sendMessage(chatId, lb, { parse_mode: 'Markdown' }).catch(() => {});
@@ -673,21 +676,27 @@ import { InlineKeyboard } from 'grammy';
       { parse_mode: 'Markdown' }
     );
 
+    let sent = 0;
     for (let i = 0; i < total; i++) {
       const q = quiz.questions[i];
       try {
-        await ctx.api.sendPoll(ctx.chat.id, `Q${i + 1}/${total}: ${q.question}`, q.options, {
-          type: 'quiz',
-          correct_option_id: q.correctIndex,
-          is_anonymous: true,
-          open_period: settings.timeLimit,
-          explanation: q.explanation ? truncate(q.explanation, 200) : undefined,
-        });
+        await ctx.api.sendPoll(ctx.chat.id,
+          safePollQuestion(`Q${i + 1}/${total}: ${q.question}`),
+          q.options.map(o => safePollOption(o)),
+          {
+            type: 'quiz',
+            correct_option_id: q.correctIndex,
+            is_anonymous: true,
+            open_period: settings.timeLimit,
+            explanation: q.explanation ? truncate(q.explanation, 200) : undefined,
+          }
+        );
+        sent++;
         if (i < total - 1) await new Promise(r => setTimeout(r, 500));
       } catch (err) {
         console.error(`Poll send error Q${i + 1}:`, err.message);
       }
     }
-    await ctx.reply(`✅ All ${total} polls sent! Correct answers shown after each timer.`);
+    await ctx.reply(`✅ Sent ${sent}/${total} polls! Correct answers shown after each timer.`);
   }
   
