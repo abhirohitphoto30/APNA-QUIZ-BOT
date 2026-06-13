@@ -1,14 +1,16 @@
 export default async function handler(req, res) {
     const tok = process.env.BOT_TOKEN;
-    const wh = process.env.WEBHOOK_URL;
 
-    if (!tok || !wh) {
+    if (!tok) {
       return res.status(500).json({
-        error: 'Missing env vars',
-        missing: { BOT_TOKEN: !tok, WEBHOOK_URL: !wh },
-        fix: 'Go to Vercel Dashboard → Settings → Environment Variables and add them',
+        error: '❌ BOT_TOKEN not set',
+        fix: 'Add BOT_TOKEN in Vercel Dashboard → Settings → Environment Variables',
       });
     }
+
+    // Auto-detect webhook URL from request host (no WEBHOOK_URL env var needed)
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    const wh = process.env.WEBHOOK_URL || `https://${host}/api/webhook`;
 
     try {
       const setRes = await fetch(`https://api.telegram.org/bot${tok}/setWebhook`, {
@@ -32,7 +34,6 @@ export default async function handler(req, res) {
         { command: 'deletequiz', description: 'Delete a quiz by ID' },
         { command: 'stop', description: 'Stop the current quiz' },
       ];
-
       const cmdRes = await fetch(`https://api.telegram.org/bot${tok}/setMyCommands`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -44,7 +45,8 @@ export default async function handler(req, res) {
       const infoData = await infoRes.json();
 
       res.status(200).json({
-        status: setData.ok ? '✅ Webhook registered!' : '❌ Webhook failed',
+        status: setData.ok ? '✅ Webhook registered successfully!' : '❌ Webhook registration failed',
+        webhook_url_used: wh,
         setWebhook: setData,
         setCommands: cmdData,
         webhookInfo: infoData,
