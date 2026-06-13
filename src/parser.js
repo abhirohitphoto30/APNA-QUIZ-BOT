@@ -1,17 +1,18 @@
 /**
    * Quiz Parser — supports two formats:
    *
-   * FORMAT 1 (6311 style):
-   *   Q1.Question text
+   * FORMAT 1 (Q.1) style):
+   *   Q.1) Question text (multi-line allowed)
+   *   Option A
+   *   Option B ✅
+   *   Ex: Explanation
+   *
+   * FORMAT 2 (😂 separator):
+   *   Q1.Question text (multi-line)
+   *   1. Statement one
    *   😂
    *   Option A ✅
    *   Option B
-   *   Ex: Explanation
-   *
-   * FORMAT 2 (6312 style):
-   *   Q.1) Question text
-   *   Option A
-   *   Option B ✅
    *   Ex: Explanation
    */
 
@@ -28,18 +29,15 @@
     if (!t) return false;
     if (t === '😂') return false;
     if (t.toLowerCase().startsWith('ex:')) return false;
-    // Question number markers
     if (/^Q\.?\d+[.)]/i.test(t)) return false;
-    // Numbered list items like "1. Statement" (with space after period)
     if (/^\d+\.\s/.test(t)) return false;
-    // Emoji number bullets like 1️⃣
     if (/^[1-9]️⃣/.test(t)) return false;
     return true;
   }
 
   function parseBlock(rawBlock) {
     const rawLines = rawBlock.split('\n');
-    const lines = rawLines.map(l => l.trim()).filter((l, i) => i > 0 || l); // keep all, trim
+    const lines = rawLines.map(l => l.trim()).filter((_, i) => i > 0 || rawLines[i]);
 
     // Find explanation
     let exIdx = -1;
@@ -63,7 +61,7 @@
       optionStartIdx--;
     }
 
-    // Collect options (up to 10 to pick best 4, handling edge cases)
+    // Collect options
     const options = [];
     let correctIndex = -1;
     for (let i = optionStartIdx; i < mainLines.length; i++) {
@@ -72,7 +70,6 @@
       if (line.toLowerCase().startsWith('ex:')) break;
       if (!isOptionLine(line)) break;
       if (options.length >= 10) break;
-
       if (line.includes('✅')) {
         correctIndex = options.length;
         options.push(cleanText(line.replace(/✅/g, '').trim()));
@@ -83,35 +80,36 @@
 
     if (options.length < 2 || correctIndex === -1) return null;
 
-    // Build question text from lines before options
+    // Build question text from lines before options — PRESERVE NEWLINES
     const questionLines = mainLines
       .slice(0, optionStartIdx)
       .filter(l => l && l !== '😂');
 
-    let question = questionLines
-      .join(' ')
-      .replace(/^Q\.?\d+[.):]?\s*/i, '')
-      .replace(/\s+/g, ' ')
-      .trim();
+    // Strip the leading Q number marker from first line only
+    if (questionLines.length > 0) {
+      questionLines[0] = questionLines[0].replace(/^Q\.?\d+[.):]?\s*/i, '');
+    }
 
+    let question = questionLines.join('\n').trim();
     if (!question) return null;
 
-    return { question, options: options.slice(0, 4), correctIndex: Math.min(correctIndex, 3), explanation };
+    return {
+      question,
+      options: options.slice(0, 4),
+      correctIndex: Math.min(correctIndex, 3),
+      explanation
+    };
   }
 
   export function parseQuizText(text) {
-    // Normalize line endings and remove junk
     text = text
       .replace(/\r\n/g, '\n')
       .replace(/\r/g, '\n')
       .replace(/[\u0000]/g, '')
       .replace(/DARK[\s]*HORSE[\s]*/gi, '');
 
-    // Strategy 1: split on Q.N) or QN. style markers
-    // Note: \s* (not \s) so we handle Q1.Text with no space
     let blocks = text.split(/(?=Q\.?\d+[.)][^\d])/i).filter(b => b.trim());
 
-    // Strategy 2: if too few blocks found, try splitting on blank lines between questions
     if (blocks.length <= 1) {
       blocks = text.split(/\n{2,}/).filter(b => b.trim() && /Q\.?\d+/i.test(b));
     }
@@ -122,7 +120,6 @@
     for (const block of blocks) {
       const parsed = parseBlock(block);
       if (parsed && parsed.options.length >= 2 && parsed.correctIndex !== -1) {
-        // Deduplicate by question text
         const key = parsed.question.slice(0, 50);
         if (!seen.has(key)) {
           seen.add(key);
