@@ -13,24 +13,34 @@ import { Bot } from 'grammy';
     handleCallback,
     handlePollAnswer,
     handlePollClosed,
+    handleFastCommand,
+    handleSlowCommand,
+    handleEndCommand,
+    handlePauseCommand,
   } from './handlers.js';
 
   const bot = new Bot(process.env.BOT_TOKEN || 'missing-token');
 
-  bot.command('start', handleStart);
-  bot.command('help', handleHelp);
+  bot.command('start',      handleStart);
+  bot.command('help',       handleHelp);
   bot.command('createquiz', handleCreateQuiz);
-  bot.command('myquizzes', handleMyQuizzes);
-  bot.command('startquiz', handleStartQuizCommand);
-  bot.command('sendpoll', handleSendPollCommand);
+  bot.command('myquizzes',  handleMyQuizzes);
+  bot.command('startquiz',  handleStartQuizCommand);
+  bot.command('sendpoll',   handleSendPollCommand);
   bot.command('deletequiz', handleDeleteQuiz);
-  bot.command('stop', handleStop);
+  bot.command('stop',       handleStop);
 
-  bot.on('message:document', handleDocument);
-  bot.on('message:text', handleText);
+  // Mid-quiz control commands
+  bot.command('fast',  handleFastCommand);
+  bot.command('slow',  handleSlowCommand);
+  bot.command('end',   handleEndCommand);
+  bot.command('pause', handlePauseCommand);
+
+  bot.on('message:document',  handleDocument);
+  bot.on('message:text',      handleText);
   bot.on('callback_query:data', handleCallback);
-  bot.on('poll_answer', handlePollAnswer);
-  bot.on('poll', handlePollClosed);
+  bot.on('poll_answer',       handlePollAnswer);
+  bot.on('poll',              handlePollClosed);
 
   bot.catch((err) => {
     const ctx = err.ctx;
