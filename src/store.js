@@ -1,45 +1,61 @@
 import { Redis } from '@upstash/redis';
 
-let _redis = null;
+  let _redis = null;
+  const _mem = new Map();
 
-function getRedis() {
-  if (!_redis) {
-    _redis = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN,
-    });
+  function getRedis() {
+    if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) return null;
+    if (!_redis) {
+      _redis = new Redis({
+        url: process.env.UPSTASH_REDIS_REST_URL,
+        token: process.env.UPSTASH_REDIS_REST_TOKEN,
+      });
+    }
+    return _redis;
   }
-  return _redis;
-}
 
-export const store = {
-  async set(key, value, ttlSeconds) {
-    const r = getRedis();
-    const serialized = JSON.stringify(value);
-    if (ttlSeconds) {
-      await r.set(key, serialized, { ex: ttlSeconds });
-    } else {
-      await r.set(key, serialized);
-    }
-  },
+  function memSet(key, value, ttlSeconds) {
+    _mem.set(key, { v: JSON.stringify(value), exp: ttlSeconds ? Date.now() + ttlSeconds * 1000 : null });
+  }
 
-  async get(key) {
-    const r = getRedis();
-    const val = await r.get(key);
-    if (val === null || val === undefined) return null;
-    if (typeof val === 'string') {
-      try { return JSON.parse(val); } catch { return val; }
-    }
-    return val;
-  },
+  function memGet(key) {
+    const e = _mem.get(key);
+    if (!e) return null;
+    if (e.exp && Date.now() > e.exp) { _mem.delete(key); return null; }
+    try { return JSON.parse(e.v); } catch { return e.v; }
+  }
 
-  async del(key) {
-    const r = getRedis();
-    await r.del(key);
-  },
+  export const store = {
+    async set(key, value, ttlSeconds) {
+      const r = getRedis();
+      if (!r) { memSet(key, value, ttlSeconds); return; }
+      const s = JSON.stringify(value);
+      ttlSeconds ? await r.set(key, s, { ex: ttlSeconds }) : await r.set(key, s);
+    },
 
-  async exists(key) {
-    const r = getRedis();
-    return (await r.exists(key)) === 1;
-  },
-};
+    async get(key) {
+      const r = getRedis();
+      if (!r) return memGet(key);
+      const val = await r.get(key);
+      if (val === null || val === undefined) return null;
+      if (typeof val === 'string') { try { return JSON.parse(val); } catch { return val; } }
+      return val;
+    },
+
+    async del(key) {
+      const r = getRedis();
+      if (!r) { _mem.delete(key); return; }
+      await r.del(key);
+    },
+
+    async exists(key) {
+      const r = getRedis();
+      if (!r) return _mem.has(key);
+      return (await r.exists(key)) === 1;
+    },
+
+    isRedisConfigured() {
+      return !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+    },
+  };
+  
